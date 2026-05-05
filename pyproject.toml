@@ -1,6 +1,6 @@
 [project]
 name = "smart-restart"
-version = "0.1.0a0"
+version = "0.1.0"
 description = "Rules-as-config restart decider for Python services. Don't restart your whole stack on every git push."
 readme = "README.md"
 license = { text = "MIT" }

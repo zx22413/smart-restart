@@ -1,0 +1,58 @@
+name: publish
+
+# Triggered by a GitHub Release. Uses OIDC trusted publishing — no API token
+# needed.
+#
+# Setup once on PyPI (https://pypi.org/manage/account/publishing/):
+#   - Project: smart-restart | owner: zx22413 | repo: smart-restart
+#     workflow: publish.yml | environment: pypi
+#
+# Tag + release flow:
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#   gh release create v0.1.0 --notes-file <release-notes.md>
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build wheel + sdist
+        run: uv build --out-dir dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/smart-restart
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

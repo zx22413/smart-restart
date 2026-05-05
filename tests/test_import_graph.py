@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from smart_restart.import_graph import build_graph, expand_changed
 
 
