@@ -30,11 +30,13 @@ _SKIP_DIRS = frozenset(
 class ImportGraph:
     """Static import graph rooted at ``root``.
 
-    ``importers[target]`` is the set of files that directly import ``target``
-    (paths are relative POSIX strings, e.g. ``"src/api/handlers.py"``).
+    ``importers[target]`` is the set of files that directly import ``target``.
+    Paths are POSIX strings prefixed with ``path_prefix`` so they match the
+    paths a consumer (typically ``git diff --name-only``) emits.
     """
 
     root: Path
+    path_prefix: str = ""
     importers: dict[str, set[str]] = field(default_factory=dict)
 
     def reverse_closure(self, seeds: set[str]) -> set[str]:
@@ -59,14 +61,18 @@ def _iter_python_files(root: Path) -> list[Path]:
     return files
 
 
-def _module_index(root: Path, files: list[Path]) -> dict[str, str]:
-    """Map dotted module name -> relative POSIX path inside ``root``.
+def _module_index(
+    root: Path, files: list[Path], path_prefix: str = ""
+) -> dict[str, str]:
+    """Map dotted module name -> POSIX file path (prefixed with ``path_prefix``).
 
     A package (directory with ``__init__.py``) is indexed under its dotted name
     pointing to the ``__init__.py`` file. A submodule ``foo/bar.py`` is indexed
-    under ``foo.bar`` pointing to ``foo/bar.py``.
+    under ``foo.bar`` pointing to ``foo/bar.py``. The ``path_prefix`` is
+    prepended so file paths match what consumers like ``git diff`` emit.
     """
     index: dict[str, str] = {}
+    prefix = path_prefix.rstrip("/") + "/" if path_prefix else ""
     for path in files:
         rel = path.relative_to(root)
         parts = list(rel.parts)
@@ -77,15 +83,15 @@ def _module_index(root: Path, files: list[Path]) -> dict[str, str]:
         if not parts:
             continue
         dotted = ".".join(parts)
-        index[dotted] = rel.as_posix()
+        index[dotted] = prefix + rel.as_posix()
     return index
 
 
 def _resolve_relative(
-    importer_rel: str, module: str, level: int
+    importer_dotted: str, module: str, level: int
 ) -> str | None:
     """Resolve a relative ``from .x.y import z`` to a dotted module name."""
-    parts = importer_rel.split("/")
+    parts = importer_dotted.split(".") if importer_dotted else []
     # Drop the file's own basename and walk up ``level - 1`` package directories.
     parts = parts[:-1]
     for _ in range(level - 1):
@@ -99,6 +105,16 @@ def _resolve_relative(
     return ".".join(parts)
 
 
+def _file_to_dotted(rel: str) -> str:
+    """Convert a POSIX relative file path to its dotted module name."""
+    parts = rel.split("/")
+    if parts[-1] == "__init__.py":
+        parts = parts[:-1]
+    else:
+        parts[-1] = parts[-1][:-3]  # strip .py
+    return ".".join(parts)
+
+
 def _extract_import_targets(
     source: str, importer_rel: str, index: dict[str, str]
 ) -> set[str]:
@@ -108,6 +124,7 @@ def _extract_import_targets(
     except SyntaxError:
         return set()
 
+    importer_dotted = _file_to_dotted(importer_rel)
     targets: set[str] = set()
 
     for node in ast.walk(tree):
@@ -121,7 +138,9 @@ def _extract_import_targets(
             module = node.module or ""
 
             if node.level > 0:
-                resolved = _resolve_relative(importer_rel, module, node.level)
+                resolved = _resolve_relative(
+                    importer_dotted, module, node.level
+                )
                 if resolved is None:
                     continue
                 base = resolved
@@ -150,25 +169,34 @@ def _extract_import_targets(
     return targets
 
 
-def build_graph(root: Path) -> ImportGraph:
-    """Build a reverse-import graph rooted at ``root``."""
+def build_graph(root: Path, path_prefix: str = "") -> ImportGraph:
+    """Build a reverse-import graph rooted at ``root``.
+
+    ``path_prefix`` is prepended (with a separating ``/``) to every file path
+    stored in the graph. Set it when callers will look up files using paths
+    relative to a wider project root — e.g. when ``git diff`` produces
+    ``src/api/handlers.py`` but the graph is built with ``--root src``, set
+    ``path_prefix="src"`` so the seed lookup matches.
+    """
     root = root.resolve()
     files = _iter_python_files(root)
-    index = _module_index(root, files)
+    index = _module_index(root, files, path_prefix=path_prefix)
+    prefix = path_prefix.rstrip("/") + "/" if path_prefix else ""
 
     importers: dict[str, set[str]] = {}
     for path in files:
         rel = path.relative_to(root).as_posix()
+        prefixed = prefix + rel
         try:
             source = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         for target in _extract_import_targets(source, rel, index):
-            if target == rel:
+            if target == prefixed:
                 continue
-            importers.setdefault(target, set()).add(rel)
+            importers.setdefault(target, set()).add(prefixed)
 
-    return ImportGraph(root=root, importers=importers)
+    return ImportGraph(root=root, path_prefix=path_prefix, importers=importers)
 
 
 def expand_changed(

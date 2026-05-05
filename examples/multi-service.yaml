@@ -1,0 +1,56 @@
+# Example: multi-service
+#
+# Three processes share utility code. We want each one to restart only when
+# code it actually depends on changes — and import-chain expansion is the
+# only way to get that right when leaf utilities are involved.
+#
+# Project layout:
+#   src/
+#     lib/         shared utilities (auth, db, models)
+#     api/         FastAPI service     (imports lib)
+#     worker/      background worker   (imports lib)
+#     scheduler/   cron-style trigger  (imports nothing in lib)
+
+actions:
+  pip_install:
+    order: 10
+  restart_api:
+    order: 20
+  restart_worker:
+    order: 20
+  restart_scheduler:
+    order: 20
+
+rules:
+  - pattern: "requirements.txt"
+    actions: [pip_install, restart_api, restart_worker, restart_scheduler]
+
+  - pattern: "pyproject.toml"
+    actions: [pip_install, restart_api, restart_worker, restart_scheduler]
+
+  - pattern: "src/api/**"
+    actions: [restart_api]
+
+  - pattern: "src/worker/**"
+    actions: [restart_worker]
+
+  - pattern: "src/scheduler/**"
+    actions: [restart_scheduler]
+
+  # `src/lib/**` deliberately maps to no actions — the lib itself never causes
+  # a restart on its own. The reason library code still triggers the right
+  # services is import-chain expansion (`--root src`): when you change
+  # `lib/auth.py`, the decider walks the import graph in reverse and adds
+  # every file that imports it (under `src/api/**` and/or `src/worker/**`),
+  # which then match the rules above.
+  - pattern: "src/lib/**"
+    actions: []
+
+  - pattern: "**/*.md"
+    actions: []
+
+  - pattern: "docs/**"
+    actions: []
+
+# Anything else: be safe.
+fallback: [restart_api, restart_worker, restart_scheduler]

@@ -155,3 +155,31 @@ def test_empty_changed_list(tmp_path: Path) -> None:
     expanded, added = expand_changed([], graph)
     assert expanded == []
     assert added == []
+
+
+def test_path_prefix_makes_paths_project_relative(tmp_path: Path) -> None:
+    """``--root src`` with ``path_prefix='src'`` lets users feed in
+    ``git diff`` output (project-relative) and get matching graph keys."""
+    _write(tmp_path, "src/pkg/__init__.py", "")
+    _write(tmp_path, "src/pkg/leaf.py", "X = 1\n")
+    _write(tmp_path, "src/pkg/uses.py", "from pkg.leaf import X\n")
+
+    graph = build_graph(tmp_path / "src", path_prefix="src")
+    # Importer paths are now prefixed.
+    assert any(p.startswith("src/") for p in graph.importers["src/pkg/leaf.py"])
+    expanded, added = expand_changed(["src/pkg/leaf.py"], graph)
+    assert "src/pkg/uses.py" in expanded
+    assert added == ["src/pkg/uses.py"]
+
+
+def test_path_prefix_preserves_relative_import_resolution(tmp_path: Path) -> None:
+    """Relative imports inside the graph still resolve correctly when a
+    prefix is applied (the prefix is purely for display, not resolution)."""
+    _write(tmp_path, "src/pkg/__init__.py", "")
+    _write(tmp_path, "src/pkg/sub/__init__.py", "")
+    _write(tmp_path, "src/pkg/sub/leaf.py", "X = 1\n")
+    _write(tmp_path, "src/pkg/sub/uses.py", "from .leaf import X\n")
+
+    graph = build_graph(tmp_path / "src", path_prefix="src")
+    expanded, _ = expand_changed(["src/pkg/sub/leaf.py"], graph)
+    assert "src/pkg/sub/uses.py" in expanded

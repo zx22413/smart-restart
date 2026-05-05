@@ -57,7 +57,24 @@ def main(argv: list[str] | None = None) -> int:
     changed = [line for line in sys.stdin.read().splitlines() if line.strip()]
 
     if args.root is not None:
-        graph = build_graph(args.root)
+        # Derive the project-relative prefix so graph paths match what the
+        # caller's ``git diff`` emits. Absolute roots outside cwd skip the
+        # prefix and require root-relative input.
+        root_arg = args.root
+        if root_arg.is_absolute():
+            try:
+                rel = root_arg.relative_to(Path.cwd())
+            except ValueError:
+                rel = None
+        else:
+            rel = root_arg
+        prefix = ""
+        if rel is not None:
+            posix = rel.as_posix().strip("/")
+            if posix and posix != ".":
+                prefix = posix
+
+        graph = build_graph(args.root, path_prefix=prefix)
         changed, added = expand_changed(changed, graph)
         if args.show_expanded and added:
             print(
