@@ -1,0 +1,30 @@
+# smart-restart example: a single web service with dependencies.
+#
+# A change to requirements.txt installs deps and restarts the api.
+# A change anywhere under src/ restarts the api but does not reinstall.
+# Markdown changes do nothing.
+# Anything else triggers the fallback (restart api, just to be safe).
+
+actions:
+  pip_install:
+    order: 10
+  restart_api:
+    order: 20
+
+rules:
+  - pattern: "requirements.txt"
+    actions: [pip_install, restart_api]
+
+  - pattern: "pyproject.toml"
+    actions: [pip_install, restart_api]
+
+  - pattern: "src/**"
+    actions: [restart_api]
+
+  - pattern: "**/*.md"
+    actions: []
+
+  - pattern: "docs/**"
+    actions: []
+
+fallback: [restart_api]
